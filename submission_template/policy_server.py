@@ -119,7 +119,8 @@ class MyPolicy(BasePolicy):
     def __init__(self):
         import torch
 
-        from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
+        from lerobot.configs import PreTrainedConfig
+        from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig  # noqa: F401  (registry 登録に必要)
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
         from lerobot.processor import PolicyProcessorPipeline
         from lerobot.processor.converters import (
@@ -133,7 +134,9 @@ class MyPolicy(BasePolicy):
         self.device = "cpu"
 
         # --- ポリシー本体（VLM はローカルのトークナイザ dir を参照させる）---
-        cfg = SmolVLAConfig.from_pretrained(MODEL_DIR)
+        # config.json の "type": "smolvla" は基底クラスの choice registry が
+        # 消費するため、SmolVLAConfig ではなく PreTrainedConfig 経由でロードする
+        cfg = PreTrainedConfig.from_pretrained(MODEL_DIR)
         cfg.vlm_model_name = str(TOKENIZER_DIR)
         self.policy = SmolVLAPolicy.from_pretrained(MODEL_DIR, config=cfg)
         self.policy.to(self.device)
