@@ -62,34 +62,149 @@ class BasePolicy(ABC):
 # ここを編集する（MyPolicy の中身だけを自分のモデルに置き換える）
 # ============================================================
 
+# ---- パス設定（zip レイアウトに合わせる）-------------------------------
+# submission.zip
+# ├── policy_server.py
+# ├── requirements.txt
+# └── model_weights/
+#     ├── config.json, model.safetensors, policy_preprocessor_*.json/.safetensors ...
+#     ├── vlm_tokenizer/   ← SmolVLM2-500M のトークナイザ一式
+#     └── vendor/lerobot/  ← vendored lerobot v0.6.0 (Py3.10 パッチ済み)
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent
+MODEL_DIR = _ROOT / "model_weights"
+TOKENIZER_DIR = MODEL_DIR / "vlm_tokenizer"
+VENDOR_DIR = MODEL_DIR / "vendor"
+
+if VENDOR_DIR.exists():
+    sys.path.insert(0, str(VENDOR_DIR))
+# -----------------------------------------------------------------------
+
+# 学習済み config の input_features と照合済み (2026-08-03 verify_state_order.py)
+KEY_IMG_AGENT = "observation.images.front"   # ← agentview_image をここに割り当て
+KEY_IMG_WRIST = "observation.images.wrist"   # ← robot0_eye_in_hand_image
+KEY_STATE = "observation.state"
+
+IMG_SIZE = 256  # 学習時解像度。観測は 128x128 で来るのでアップスケールする
+
+
+def _quat_xyzw_to_axis_angle(q: np.ndarray) -> np.ndarray:
+    """quaternion (x, y, z, w) → axis-angle (3,)。
+
+    robosuite の T.quat2axisangle と同一の規約 (angle = 2*acos(w) ∈ [0, 2π]、
+    [-π, π] への折り返しなし)。学習データの normalizer 統計で
+    state dim 3 の max が +3.77 (> π) であることから、この規約で
+    生成されたと確認済み。折り返すと π 近傍で符号反転し正規化が壊れる。
+    """
+    q = q.astype(np.float64)
+    q = q / max(np.linalg.norm(q), 1e-12)
+    w = float(np.clip(q[3], -1.0, 1.0))
+    den = np.sqrt(max(1.0 - w * w, 0.0))
+    if np.isclose(den, 0.0):
+        return np.zeros(3, dtype=np.float32)
+    return (q[:3] * (2.0 * np.arccos(w)) / den).astype(np.float32)
+
 
 class MyPolicy(BasePolicy):
-    """自分のポリシーをここに実装する。
+    """SmolVLA (LoRA マージ済み) による VLA ポリシー。
 
-    例: チェックポイントをロードして推論する場合
-        def __init__(self):
-            self.model = torch.load("model_weights/checkpoint.pth")
-            self.model.eval()
-
-        def get_action(self, obs):
-            image = obs["agentview_image"]
-            # ... 前処理・推論 ...
-            return action
+    - モデル/プロセッサは __init__ で 1 回だけロード（起動 120 秒制限内）
+    - action chunking は SmolVLAPolicy.select_action() 内部のキューに任せる
+      （n_action_steps ごとに 1 回だけ重い推論が走り、他ステップはキューから
+        取り出すだけなので 10 秒/リクエスト制限を満たす）
     """
 
     def __init__(self):
-        # TODO: モデルのロード
-        pass
+        import torch
+
+        from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
+        from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+        from lerobot.processor import PolicyProcessorPipeline
+        from lerobot.processor.converters import (
+            batch_to_transition,
+            policy_action_to_transition,
+            transition_to_batch,
+            transition_to_policy_action,
+        )
+
+        self._torch = torch
+        self.device = "cpu"
+
+        # --- ポリシー本体（VLM はローカルのトークナイザ dir を参照させる）---
+        cfg = SmolVLAConfig.from_pretrained(MODEL_DIR)
+        cfg.vlm_model_name = str(TOKENIZER_DIR)
+        self.policy = SmolVLAPolicy.from_pretrained(MODEL_DIR, config=cfg)
+        self.policy.to(self.device)
+        self.policy.eval()
+
+        # --- 前処理/後処理パイプライン ---
+        self.preprocessor = PolicyProcessorPipeline.from_pretrained(
+            MODEL_DIR,
+            config_filename="policy_preprocessor.json",
+            overrides={
+                "tokenizer_processor": {"tokenizer_name": str(TOKENIZER_DIR)},
+                "device_processor": {"device": self.device},
+            },
+            to_transition=batch_to_transition,
+            to_output=transition_to_batch,
+        )
+        self.postprocessor = PolicyProcessorPipeline.from_pretrained(
+            MODEL_DIR,
+            config_filename="policy_postprocessor.json",
+            overrides={
+                "device_processor": {"device": self.device},
+            },
+            to_transition=policy_action_to_transition,
+            to_output=transition_to_policy_action,
+        )
+
+        self.instruction = ""
+
+    # ---------------- 観測 → モデル入力 ----------------
+
+    def _prep_image(self, img_hwc_uint8: np.ndarray):
+        """(128,128,3) uint8 → (1,3,256,256) float32 [0,1]"""
+        torch = self._torch
+        t = torch.from_numpy(np.ascontiguousarray(img_hwc_uint8))
+        t = t.permute(2, 0, 1).unsqueeze(0).float() / 255.0
+        t = torch.nn.functional.interpolate(
+            t, size=(IMG_SIZE, IMG_SIZE), mode="bilinear", align_corners=False
+        )
+        return t
+
+    def _build_batch(self, obs: dict[str, np.ndarray]) -> dict:
+        torch = self._torch
+        axis_angle = _quat_xyzw_to_axis_angle(obs["robot0_eef_quat"])
+        state = np.concatenate(
+            [
+                obs["robot0_eef_pos"].astype(np.float32),      # (3,)
+                axis_angle,                                     # (3,)
+                obs["robot0_gripper_qpos"].astype(np.float32),  # (2,)
+            ]
+        )  # → (8,)  ※順序は verify_state_order.py で normalizer 統計と照合済みであること
+        return {
+            KEY_IMG_AGENT: self._prep_image(obs["agentview_image"]),
+            KEY_IMG_WRIST: self._prep_image(obs["robot0_eye_in_hand_image"]),
+            KEY_STATE: torch.from_numpy(state).unsqueeze(0),  # (1, 8)
+            "task": self.instruction,
+        }
+
+    # ---------------- BasePolicy 実装 ----------------
 
     def get_action(self, obs: dict[str, np.ndarray]) -> np.ndarray:
-        # TODO: 推論処理を実装
-        # 以下はランダムポリシー（動作確認用）
-        return np.random.uniform(-1, 1, size=7).astype(np.float32)
+        torch = self._torch
+        with torch.no_grad():
+            batch = self.preprocessor(self._build_batch(obs))
+            action = self.policy.select_action(batch)  # キュー管理込み → (1, action_dim)
+            action = self.postprocessor(action)
+        action = action.squeeze(0).cpu().numpy().astype(np.float32)
+        return action[:7]
 
     def reset(self, instruction: str = "") -> None:
-        # TODO: 内部状態のリセット（action chunking のキャッシュ等）
-        # instruction にはタスクの言語指示が渡される
         self.instruction = instruction
+        self.policy.reset()  # action chunking のキューをクリア
 
 
 # ============================================================
