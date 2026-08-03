@@ -6,7 +6,6 @@ numpy>=1.19
 
 # --- SmolVLA (vendored lerobot v0.6.0) の実行依存 ---
 # torch は採点イメージに 2.11.0+cpu が同梱済みのため記載しない
-torchvision>=0.22.0,<0.27.0
 transformers>=5.4.0,<5.6.0
 safetensors>=0.4.3,<1.0.0
 huggingface_hub>=1.0.0,<2.0.0
