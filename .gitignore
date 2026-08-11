@@ -8,3 +8,7 @@ model_weights/
 results/
 venv/
 sandbox/
+.venv/
+submission.zip
+__pycache__/
+model_weights/model.safetensors
