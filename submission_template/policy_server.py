@@ -151,7 +151,7 @@ class MyPolicy(BasePolicy):
         )
 
         self._torch = torch
-        self.device = "cpu"
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         # --- ポリシー本体（VLM はローカルのトークナイザ dir を参照させる）---
         # config.json の "type": "smolvla" は基底クラスの choice registry が
@@ -183,6 +183,19 @@ class MyPolicy(BasePolicy):
             to_output=transition_to_policy_action,
         )
 
+        self.instruction = ""
+
+        # --- warmup: pay first-inference cost at startup, not on first /act ---
+        dummy_obs = {
+            "agentview_image": np.zeros((128, 128, 3), dtype=np.uint8),
+            "robot0_eye_in_hand_image": np.zeros((128, 128, 3), dtype=np.uint8),
+            "robot0_eef_pos": np.zeros(3, dtype=np.float32),
+            "robot0_eef_quat": np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32),
+            "robot0_gripper_qpos": np.zeros(2, dtype=np.float32),
+        }
+        self.instruction = "warmup"
+        _ = self.get_action(dummy_obs)
+        self.policy.reset()
         self.instruction = ""
 
     # ---------------- 観測 → モデル入力 ----------------

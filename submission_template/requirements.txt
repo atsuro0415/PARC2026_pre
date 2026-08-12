@@ -20,3 +20,4 @@ gymnasium
 opencv-python-headless
 datasets
 av
+typing_extensions>=4.5
