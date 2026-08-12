@@ -30,6 +30,7 @@ The core components are:
 
 from __future__ import annotations
 
+from typing import TypeVar as _PTV, Generic as _PGen
 import importlib
 import json
 import re
@@ -250,8 +251,10 @@ class ProcessorMigrationError(Exception):
         )
 
 
+TInput = _PTV("TInput")
+TOutput = _PTV("TOutput")
 @dataclass
-class DataProcessorPipeline[TInput, TOutput](HubMixin):
+class DataProcessorPipeline(HubMixin, _PGen[TInput, TOutput]):
     """A sequential pipeline for processing data, integrated with the Hugging Face Hub.
 
     This class chains together multiple `ProcessorStep` instances to form a complete

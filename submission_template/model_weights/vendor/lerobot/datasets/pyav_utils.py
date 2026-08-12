@@ -24,7 +24,17 @@ import logging
 from typing import Any
 
 import av
-import av.option  # av>=15 では自動importされないため
+try:
+    import av.option  # noqa: F401  (av 18+ では明示 import が必要)
+except Exception:
+    # av 17 (py3.10 向け) には av.option サブモジュールが無い。
+    # 型注釈 av.option.Option の評価用にダミーを用意する。
+    import sys as _sys
+    import types as _types
+    _opt = _types.ModuleType("av.option")
+    _opt.Option = object
+    av.option = _opt
+    _sys.modules["av.option"] = _opt
 import numpy as np
 
 logger = logging.getLogger(__name__)

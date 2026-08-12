@@ -80,6 +80,26 @@ VENDOR_DIR = MODEL_DIR / "vendor"
 
 if VENDOR_DIR.exists():
     sys.path.insert(0, str(VENDOR_DIR))
+
+# --- Python 3.10 compat shim (grading env is 3.10; lerobot v0.6.0 uses 3.11 features) ---
+if sys.version_info < (3, 11):
+    import datetime as _dt
+    import enum as _enum
+    import typing as _typing
+    import typing_extensions as _te
+    if not hasattr(_typing, "Self"):
+        _typing.Self = _te.Self
+    for _name in ("Unpack", "Required", "NotRequired", "Never", "LiteralString",
+                  "TypeVarTuple", "Unpack", "assert_never", "assert_type",
+                  "dataclass_transform", "override"):
+        if not hasattr(_typing, _name) and hasattr(_te, _name):
+            setattr(_typing, _name, getattr(_te, _name))
+    if not hasattr(_enum, "StrEnum"):
+        class _StrEnum(str, _enum.Enum):
+            pass
+        _enum.StrEnum = _StrEnum
+    if not hasattr(_dt, "UTC"):
+        _dt.UTC = _dt.timezone.utc
 # -----------------------------------------------------------------------
 
 # 学習済み config の input_features と照合済み (2026-08-03 verify_state_order.py)

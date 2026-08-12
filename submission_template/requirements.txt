@@ -14,3 +14,9 @@ draccus==0.10.0
 packaging>=24.0
 pillow>=10.0.0,<13.0.0
 num2words>=0.5.14,<0.6.0
+
+torchvision
+gymnasium
+opencv-python-headless
+datasets
+av

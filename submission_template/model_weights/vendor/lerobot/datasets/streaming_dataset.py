@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from typing import TypeVar as _PTV, Generic as _PGen
 from collections import deque
 from collections.abc import Callable, Generator, Iterable, Iterator
 from pathlib import Path
@@ -58,7 +59,8 @@ class LookAheadError(Exception):
     pass
 
 
-class Backtrackable[T]:
+T = _PTV("T")
+class Backtrackable(_PGen[T]):
     """
     Wrap any iterator/iterable so you can step back up to `history` items
     and look ahead up to `lookahead` items.
