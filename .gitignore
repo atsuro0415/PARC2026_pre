@@ -12,3 +12,5 @@ sandbox/
 submission.zip
 __pycache__/
 model_weights/model.safetensors
+.venv310/
+submission/
