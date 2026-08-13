@@ -203,7 +203,7 @@ class MyPolicy(BasePolicy):
     def _prep_image(self, img_hwc_uint8: np.ndarray):
         """(128,128,3) uint8 → (1,3,256,256) float32 [0,1]"""
         torch = self._torch
-        t = torch.from_numpy(np.ascontiguousarray(img_hwc_uint8))
+        t = torch.from_numpy(np.ascontiguousarray(img_hwc_uint8[::-1, ::-1]))  # LiberoProcessor と同じ 180 度回転
         t = t.permute(2, 0, 1).unsqueeze(0).float() / 255.0
         t = torch.nn.functional.interpolate(
             t, size=(IMG_SIZE, IMG_SIZE), mode="bilinear", align_corners=False
