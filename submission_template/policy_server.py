@@ -203,7 +203,12 @@ class MyPolicy(BasePolicy):
     def _prep_image(self, img_hwc_uint8: np.ndarray):
         """(128,128,3) uint8 → (1,3,256,256) float32 [0,1]"""
         torch = self._torch
-        t = torch.from_numpy(np.ascontiguousarray(img_hwc_uint8[::-1, ::-1]))  # LiberoProcessor と同じ 180 度回転
+        #t = torch.from_numpy(np.ascontiguousarray(img_hwc_uint8[::-1, ::-1]))  # LiberoProcessor と同じ 180 度回転
+        img = np.ascontiguousarray(img_hwc_uint8[::-1, ::-1])  # 180 rotate
+        if img.shape[0] < 224:
+            import cv2
+            img = cv2.resize(img, (256, 256), interpolation=cv2.INTER_CUBIC)
+        t = torch.from_numpy(img)
         t = t.permute(2, 0, 1).unsqueeze(0).float() / 255.0
         t = torch.nn.functional.interpolate(
             t, size=(IMG_SIZE, IMG_SIZE), mode="bilinear", align_corners=False
@@ -239,6 +244,16 @@ class MyPolicy(BasePolicy):
         return action[:7]
 
     def reset(self, instruction: str = "") -> None:
+        instruction = instruction.lower().strip()
+        _m = {
+            "pick the akita black bowl in the top layer of the wooden cabinet and place it on the plate":
+                "pick up the black bowl in the top drawer of the wooden cabinet and place it on the plate",
+            "pick the tomato sauce and place it in the basket":
+                "pick up the tomato sauce and place it in the basket",
+            "pick the milk and place it in the basket":
+                "pick up the milk and place it in the basket",
+        }
+        instruction = _m.get(instruction, instruction)
         self.instruction = instruction
         self.policy.reset()  # action chunking のキューをクリア
 
